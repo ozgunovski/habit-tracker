@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Özgün.tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: #0a0a0a;
+    color: #e0e0e0;
+    min-height: 100vh;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type="number"] { -moz-appearance: textfield; }
+  input::-webkit-outer-spin-button,
+  input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+
+// ============================================================
+//  ALIŞKANLIK LİSTESİ — YENİ ALIŞKANLIK EKLEMEK İÇİN
+//  BURAYA AYNI FORMATTA BİR SATIR EKLE, HEPSI BU.
+//
+//  Örnek:
+//  { id: "meditation", emoji: "🧘", label: "5dk Meditasyon", category: "soul" },
+//
+//  Kategoriler: body (yeşil), mind (mavi), discipline (kırmızı), soul (sarı)
+// ============================================================
+const HABITS = [
+  { id: "reading",   emoji: "📖", label: "Okuma (>30dk)",         category: "mind" },
+  { id: "water",     emoji: "💧", label: "Su (2.5L)",             category: "body" },
+  { id: "fasting",   emoji: "⏳", label: "Aralıklı Oruç",        category: "body" },
+  { id: "calories",  emoji: "🔥", label: "Kalori Açığı",         category: "body" },
+  { id: "steps",     emoji: "👣", label: "5000+ Adım",           category: "body" },
+  { id: "thesis",    emoji: "🎓", label: "Tez: 1 Mikro Görev",   category: "mind" },
+  { id: "ontime",    emoji: "⏰", label: "İşe Zamanında",        category: "discipline" },
+  { id: "kindness",  emoji: "💛", label: "Eşime Sevgi Gösterdim", category: "soul" },
+];
+
+const START_WEIGHT = 128.8;
+
+const CATEGORY_COLORS = {
+  body:       { accent: "#4ade80", label: "Beden",    bg: "#1a2f23" },
+  mind:       { accent: "#60a5fa", label: "Zihin",    bg: "#1a1f2f" },
+  discipline: { accent: "#f87171", label: "Disiplin", bg: "#2f1a1a" },
+  soul:       { accent: "#fbbf24", label: "Ruh",      bg: "#2f2a1a" },
+};
+
+// ============================================================
+//  VERİ YÖNETİMİ
+// ============================================================
+const STORAGE_KEY = "ozgun_habits_v1";
+
+function loadData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch(e) { return {}; }
+}
+
+function saveData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function dateKey(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+}
+
+function today() { return dateKey(new Date()); }
+
+function dayName(d) {
+  return ["Paz","Pzt","Sal","Çar","Per","Cum","Cmt"][new Date(d+"T00:00:00").getDay()];
+}
+
+// ============================================================
+//  HESAPLAMALAR
+// ============================================================
+function dayScore(data, dk) {
+  const h = data[dk]?.habits || {};
+  const done = HABITS.filter(x => h[x.id]).length;
+  return Math.round((done / HABITS.length) * 100);
+}
+
+function getStreak(data) {
+  let s = 0, d = new Date();
+  if (dayScore(data, dateKey(d)) === 0) d.setDate(d.getDate()-1);
+  while(true) {
+    if (dayScore(data, dateKey(d)) >= 50) { s++; d.setDate(d.getDate()-1); }
+    else break;
+  }
+  return s;
+}
+
+function latestWeight(data) {
+  for (const k of Object.keys(data).sort().reverse()) {
+    if (data[k]?.weight) return data[k].weight;
+  }
+  return null;
+}
+
+function weightChange(data) {
+  const w = latestWeight(data);
+  return w ? (w - START_WEIGHT).toFixed(1) : null;
+}
+
+function weekDays(currentDate) {
+  const t = new Date(currentDate+"T00:00:00");
+  const dow = t.getDay();
+  const mon = new Date(t);
+  mon.setDate(t.getDate() - ((dow+6)%7));
+  const days = [];
+  for (let i=0; i<7; i++) {
+    const d = new Date(mon);
+    d.setDate(mon.getDate()+i);
+    const k = dateKey(d);
+    days.push({ key:k, name: dayName(k), num: d.getDate(), isToday: k===today(), isFuture: d > new Date() });
+  }
+  return days;
+}
+
+function motivation(score) {
+  if (score===100) return "Mükemmel gün! Kral enerjisi aktif. 👑";
+  if (score>=75) return "Güçlü bir gün. Savaşçı modundasın. ⚔️";
+  if (score>=50) return "İdare eder. Yarın daha iyi olabilir.";
+  if (score>=25) return "Düşük enerji. Kendine nazik ol.";
+  if (score>0) return "Bir şey yaptın, sıfır değil. Bu önemli.";
+  return "Bugün boş geçti. Yarın yeni bir gün.";
+}
+
+function streakMsg(s) {
+  if (s>=30) return `🔥 ${s} gün! Alışkanlık artık sende.`;
+  if (s>=14) return `🔥 ${s} gün serisi! Nöroplastisite çalışıyor.`;
+  if (s>=7)  return `🔥 ${s} gün! Bir hafta tamam.`;
+  if (s>=3)  return `${s} gün serisi. Devam et.`;
+  if (s>=1)  return `${s} gün. Başlangıç güzel.`;
+  return "Bugün başla.";
+}
+
+// ============================================================
+//  RENDER
+// ============================================================
+let STATE = {
+  data: loadData(),
+  currentDate: today(),
+  view: "today",
+  animating: null,
+};
+
+function render() {
+  const { data, currentDate: cd, view } = STATE;
+  const score = dayScore(data, cd);
+  const streak = getStreak(data);
+  const habits = data[cd]?.habits || {};
+  const isToday = cd === today();
+  const wk = weekDays(cd);
+  const lw = latestWeight(data);
+  const wc = weightChange(data);
+
+  let html = `
+  <!-- HEADER -->
+  <div style="background:linear-gradient(135deg,#0f1923,#1a0f23);padding:24px 20px 20px;border-bottom:1px solid #1f2937;position:relative;overflow:hidden">
+    <div style="position:absolute;top:0;right:0;width:200px;height:200px;background:radial-gradient(circle,rgba(99,102,241,.08),transparent 70%);pointer-events:none"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div>
+        <h1 style="font-size:1.4rem;font-weight:700;letter-spacing:-.5px;color:#f0f0f0">Özgün<span style="color:#6366f1">.</span>tracker</h1>
+        <div style="font-size:.65rem;color:#6b7280;margin-top:2px;letter-spacing:2px;text-transform:uppercase">Bireyleşme Günlüğü</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:2rem;font-weight:700;color:${score>=75?'#4ade80':score>=50?'#fbbf24':score>0?'#f87171':'#374151'}">${score}<span style="font-size:.9rem;color:#6b7280">%</span></div>
+        <div style="font-size:.6rem;color:#6b7280;letter-spacing:1px">GÜNLÜK SKOR</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1;background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px;border:1px solid #1f2937">
+        <div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:4px">SERİ</div>
+        <div style="font-size:.85rem;color:${streak>=3?'#fb923c':'#9ca3af'}">${streakMsg(streak)}</div>
+      </div>
+      <div style="flex:1;background:rgba(255,255,255,.03);border-radius:8px;padding:10px 12px;border:1px solid #1f2937">
+        <div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:4px">KİLO</div>
+        <div style="font-size:.85rem">${lw ? `<span style="color:#f0f0f0">${lw} kg</span><span style="color:${parseFloat(wc)<=0?'#4ade80':'#f87171'};margin-left:6px;font-size:.75rem">${wc>0?'+':''}${wc}</span>` : '<span style="color:#374151">—</span>'}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DATE NAV -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:rgba(255,255,255,.02);border-bottom:1px solid #111">
+    <button onclick="navDate(-1)" style="background:none;border:none;color:#6b7280;font-size:1.2rem;cursor:pointer;padding:4px 8px;font-family:inherit">←</button>
+    <div style="text-align:center">
+      <div style="font-size:.9rem;font-weight:500;color:${isToday?'#6366f1':'#9ca3af'}">${isToday ? 'Bugün' : new Date(cd+'T00:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'long',weekday:'long'})}</div>
+      ${!isToday ? '<button onclick="goToday()" style="background:none;border:none;color:#6366f1;font-size:.65rem;cursor:pointer;margin-top:2px;text-decoration:underline;font-family:inherit">Bugüne dön</button>' : ''}
+    </div>
+    <button onclick="navDate(1)" style="background:none;border:none;color:${isToday?'#1f2937':'#6b7280'};font-size:1.2rem;cursor:${isToday?'default':'pointer'};padding:4px 8px;font-family:inherit">→</button>
+  </div>
+
+  <!-- TABS -->
+  <div style="display:flex;border-bottom:1px solid #111">
+    ${['today','week','data'].map(t => {
+      const labels = {today:'Günlük',week:'Hafta',data:'Veri'};
+      return `<button onclick="setView('${t}')" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${view===t?'#6366f1':'transparent'};color:${view===t?'#e0e0e0':'#4b5563'};font-size:.75rem;cursor:pointer;letter-spacing:1px;font-family:inherit">${labels[t]}</button>`;
+    }).join('')}
+  </div>
+
+  <div style="padding:16px 20px;padding-bottom:100px">`;
+
+  // ---- TODAY VIEW ----
+  if (view === 'today') {
+    const cats = Object.entries(CATEGORY_COLORS);
+    for (const [ck, ci] of cats) {
+      const ch = HABITS.filter(h => h.category === ck);
+      if (!ch.length) continue;
+      html += `<div style="margin-bottom:16px">
+        <div style="font-size:.6rem;color:${ci.accent};letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;opacity:.7">${ci.label}</div>`;
+      for (const h of ch) {
+        const checked = habits[h.id] || false;
+        const isAnim = STATE.animating === h.id;
+        html += `<button onclick="toggleHabit('${h.id}')" style="display:flex;align-items:center;width:100%;padding:14px 16px;margin-bottom:6px;background:${checked?ci.bg:'rgba(255,255,255,.02)'};border:${checked?`1px solid ${ci.accent}33`:'1px solid #1a1a1a'};border-radius:10px;cursor:pointer;transition:all .3s;transform:scale(${isAnim?1.02:1});font-family:inherit">
+          <div style="width:28px;height:28px;border-radius:8px;border:2px solid ${checked?ci.accent:'#333'};display:flex;align-items:center;justify-content:center;margin-right:12px;font-size:14px;background:${checked?ci.accent+'22':'transparent'};transition:all .3s;color:${ci.accent}">${checked?'✓':''}</div>
+          <span style="font-size:1.1rem;margin-right:10px">${h.emoji}</span>
+          <span style="font-size:.82rem;color:${checked?'#e0e0e0':'#6b7280'}">${h.label}</span>
+          ${checked ? `<span style="margin-left:auto;color:${ci.accent};font-size:.7rem;font-weight:500">+${Math.round(100/HABITS.length)}%</span>` : ''}
+        </button>`;
+      }
+      html += `</div>`;
+    }
+
+    // Data inputs
+    const cw = data[cd]?.weight || '';
+    const cs = data[cd]?.stepCount || '';
+    html += `
+    <div style="margin-top:20px">
+      <div style="font-size:.6rem;color:#6366f1;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px;opacity:.7">Takip Verileri</div>
+      <div style="display:flex;gap:10px">
+        <div style="flex:1">
+          <label style="font-size:.65rem;color:#6b7280;display:block;margin-bottom:4px">⚖️ Kilo (kg)</label>
+          <input type="number" step="0.1" value="${cw}" onchange="updateWeight(this.value)" placeholder="—" style="width:100%;padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid #1f2937;border-radius:8px;color:#e0e0e0;font-size:.9rem;font-family:inherit">
+        </div>
+        <div style="flex:1">
+          <label style="font-size:.65rem;color:#6b7280;display:block;margin-bottom:4px">👣 Adım Sayısı</label>
+          <input type="number" value="${cs}" onchange="updateSteps(this.value)" placeholder="—" style="width:100%;padding:10px 12px;background:rgba(255,255,255,.03);border:1px solid #1f2937;border-radius:8px;color:#e0e0e0;font-size:.9rem;font-family:inherit">
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:20px;padding:16px;background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(168,85,247,.05));border-radius:10px;border:1px solid #1f2937;text-align:center">
+      <div style="font-size:.85rem;color:#c4b5fd">${motivation(score)}</div>
+    </div>`;
+  }
+
+  // ---- WEEK VIEW ----
+  if (view === 'week') {
+    html += `<div style="display:flex;gap:6px;align-items:flex-end;height:180px;margin-bottom:20px">`;
+    for (const d of wk) {
+      const s = dayScore(data, d.key);
+      const col = d.isToday ? 'linear-gradient(180deg,#6366f1,#4f46e5)' : s>=75 ? 'linear-gradient(180deg,#4ade80,#22c55e)' : s>=50 ? 'linear-gradient(180deg,#fbbf24,#f59e0b)' : s>0 ? 'linear-gradient(180deg,#6b7280,#4b5563)' : '#1a1a1a';
+      html += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%">
+        <div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center">
+          <div style="width:100%;max-width:36px;height:${d.isFuture?'2px':Math.max(s,4)+'%'};background:${col};border-radius:4px 4px 0 0;transition:height .5s;min-height:${d.isFuture?'2':'4'}px"></div>
+        </div>
+        ${!d.isFuture&&s>0 ? `<div style="font-size:.6rem;color:#9ca3af;margin-top:4px">${s}%</div>` : ''}
+        <div style="font-size:.65rem;margin-top:4px;color:${d.isToday?'#6366f1':d.isFuture?'#1f2937':'#6b7280'};font-weight:${d.isToday?700:400}">${d.name}</div>
+        <div style="font-size:.6rem;color:#374151">${d.num}</div>
+      </div>`;
+    }
+    html += `</div>`;
+
+    // Week stats
+    const scored = wk.filter(d => !d.isFuture && dayScore(data,d.key)>0);
+    const avg = scored.length ? Math.round(scored.reduce((s,d) => s+dayScore(data,d.key),0)/scored.length) : 0;
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div style="background:rgba(255,255,255,.03);border-radius:10px;padding:14px;border:1px solid #1f2937">
+        <div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:6px">HAFTALIK ORT.</div>
+        <div style="font-size:1.5rem;font-weight:700;color:${avg>=50?'#4ade80':'#f87171'}">${avg}%</div>
+      </div>
+      <div style="background:rgba(255,255,255,.03);border-radius:10px;padding:14px;border:1px solid #1f2937">
+        <div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:6px">AKTİF SERİ</div>
+        <div style="font-size:1.5rem;font-weight:700;color:${streak>=3?'#fb923c':'#9ca3af'}">${streak} <span style="font-size:.7rem;color:#6b7280">gün</span></div>
+      </div>
+    </div>`;
+
+    // Per habit
+    html += `<div style="margin-top:16px"><div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:10px">ALIŞKANLIK BAZINDA</div>`;
+    for (const h of HABITS) {
+      const hits = wk.filter(d => !d.isFuture && data[d.key]?.habits?.[h.id]).length;
+      const total = wk.filter(d => !d.isFuture).length || 1;
+      const pct = Math.round(hits/total*100);
+      html += `<div style="display:flex;align-items:center;margin-bottom:8px">
+        <span style="font-size:.9rem;width:28px">${h.emoji}</span>
+        <span style="font-size:.72rem;color:#9ca3af;flex:1">${h.label}</span>
+        <div style="width:80px;height:6px;background:#1a1a1a;border-radius:3px;overflow:hidden;margin-right:8px">
+          <div style="width:${pct}%;height:100%;background:${CATEGORY_COLORS[h.category].accent};border-radius:3px;transition:width .5s"></div>
+        </div>
+        <span style="font-size:.65rem;color:#6b7280;width:32px;text-align:right">${pct}%</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ---- DATA VIEW ----
+  if (view === 'data') {
+    html += `<div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:12px">KİLO GEÇMİŞİ</div>`;
+    html += `<div style="background:rgba(255,255,255,.03);border-radius:10px;padding:16px;border:1px solid #1f2937;margin-bottom:16px">`;
+    html += `<div style="display:flex;justify-content:space-between;margin-bottom:12px">
+      <div><div style="font-size:.6rem;color:#6b7280">Başlangıç</div><div style="font-size:1.1rem;font-weight:500">${START_WEIGHT} kg</div></div>
+      <div style="text-align:center"><div style="font-size:.6rem;color:#6b7280">Güncel</div><div style="font-size:1.1rem;font-weight:500">${lw||'—'} kg</div></div>
+      <div style="text-align:right"><div style="font-size:.6rem;color:#6b7280">Değişim</div><div style="font-size:1.1rem;font-weight:500;color:${parseFloat(wc)<=0?'#4ade80':'#f87171'}">${wc?wc+' kg':'—'}</div></div>
+    </div>`;
+    html += `<div style="max-height:200px;overflow-y:auto">`;
+    const wEntries = Object.keys(data).sort().reverse().filter(k => data[k]?.weight);
+    for (const k of wEntries) {
+      const diff = (data[k].weight - START_WEIGHT).toFixed(1);
+      html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #111;font-size:.75rem">
+        <span style="color:#6b7280">${new Date(k+'T00:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span>
+        <span style="color:#e0e0e0">${data[k].weight} kg</span>
+        <span style="color:${diff<=0?'#4ade80':'#f87171'};font-size:.65rem">${diff>0?'+':''}${diff}</span>
+      </div>`;
+    }
+    if (!wEntries.length) html += `<div style="color:#374151;font-size:.75rem;text-align:center">Henüz kilo verisi yok</div>`;
+    html += `</div></div>`;
+
+    // Steps
+    html += `<div style="font-size:.6rem;color:#6b7280;letter-spacing:1px;margin-bottom:12px">ADIM GEÇMİŞİ</div>`;
+    html += `<div style="background:rgba(255,255,255,.03);border-radius:10px;padding:16px;border:1px solid #1f2937;margin-bottom:16px"><div style="max-height:200px;overflow-y:auto">`;
+    const sEntries = Object.keys(data).sort().reverse().filter(k => data[k]?.stepCount);
+    for (const k of sEntries) {
+      html += `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #111;font-size:.75rem">
+        <span style="color:#6b7280">${new Date(k+'T00:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'short'})}</span>
+        <span style="color:${data[k].stepCount>=5000?'#4ade80':'#fbbf24'}">${data[k].stepCount?.toLocaleString()} adım</span>
+      </div>`;
+    }
+    if (!sEntries.length) html += `<div style="color:#374151;font-size:.75rem;text-align:center">Henüz adım verisi yok</div>`;
+    html += `</div></div>`;
+
+    // Reset
+    html += `<div style="text-align:center;margin-top:24px">
+      <button onclick="resetAll()" style="background:none;border:1px solid #2a1a1a;border-radius:8px;color:#6b2020;font-size:.65rem;padding:8px 16px;cursor:pointer;font-family:inherit">Tüm Verileri Sıfırla</button>
+    </div>`;
+  }
+
+  html += `</div>`;
+  document.getElementById('app').innerHTML = html;
+}
+
+// ============================================================
+//  EYLEMLER
+// ============================================================
+function toggleHabit(id) {
+  const cd = STATE.currentDate;
+  if (!STATE.data[cd]) STATE.data[cd] = { habits: {}, weight: null, stepCount: null };
+  STATE.data[cd].habits[id] = !STATE.data[cd].habits[id];
+  saveData(STATE.data);
+
+  if (STATE.data[cd].habits[id]) {
+    STATE.animating = id;
+    render();
+    setTimeout(() => { STATE.animating = null; render(); }, 400);
+  } else {
+    render();
+  }
+}
+
+function updateWeight(val) {
+  const cd = STATE.currentDate;
+  if (!STATE.data[cd]) STATE.data[cd] = { habits: {}, weight: null, stepCount: null };
+  STATE.data[cd].weight = val ? parseFloat(val) : null;
+  saveData(STATE.data);
+  // Don't re-render to avoid losing focus
+}
+
+function updateSteps(val) {
+  const cd = STATE.currentDate;
+  if (!STATE.data[cd]) STATE.data[cd] = { habits: {}, weight: null, stepCount: null };
+  STATE.data[cd].stepCount = val ? parseInt(val) : null;
+  saveData(STATE.data);
+}
+
+function navDate(dir) {
+  const d = new Date(STATE.currentDate+"T00:00:00");
+  d.setDate(d.getDate()+dir);
+  if (d <= new Date()) { STATE.currentDate = dateKey(d); render(); }
+}
+
+function goToday() { STATE.currentDate = today(); render(); }
+
+function setView(v) { STATE.view = v; render(); }
+
+function resetAll() {
+  if (confirm("Tüm veriler silinecek. Emin misin?")) {
+    STATE.data = {};
+    localStorage.removeItem(STORAGE_KEY);
+    render();
+  }
+}
+
+// İlk render
+render();
+
+</script>
+</body>
+</html>
