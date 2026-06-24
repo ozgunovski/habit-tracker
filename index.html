@@ -49,9 +49,7 @@ const auth  = getAuth(fbApp);
 const db    = getFirestore(fbApp);
 const provider = new GoogleAuthProvider();
 
-// ══════════════════════════════════════════════════════
-//  ALIŞKANLIKLAR
-// ══════════════════════════════════════════════════════
+// ── Alışkanlıklar ─────────────────────────────────────
 const HABITS = [
   { id: "morning_water", emoji: "🥛", label: "Uyanır Uyanmaz Büyük Bardak Su", category: "body" },
   { id: "morning_pages", emoji: "📝", label: "Sabah 3 Sayfa Beyin Boşaltma",   category: "mind" },
@@ -70,6 +68,111 @@ const CAT = {
   discipline: { color: "#dc2626", bg: "#fecdd3", border: "#fca5a5", label: "Disiplin" },
   soul:       { color: "#d97706", bg: "#fde68a", border: "#fbbf24", label: "Ruh"      },
 };
+
+// ── Pomodoro Timer ────────────────────────────────────
+const TIMER = {
+  mode: 'work',       // 'work' | 'break'
+  seconds: 25 * 60,
+  running: false,
+  interval: null,
+};
+
+function timerTick() {
+  TIMER.seconds--;
+  if (TIMER.seconds <= 0) {
+    if (TIMER.mode === 'work') {
+      TIMER.mode = 'break';
+      TIMER.seconds = 5 * 60;
+      tryNotify('🍅 25 dakika bitti! 5 dakika mola.');
+    } else {
+      // Tam pomodoro bitti
+      const dd = dayData(S.cd);
+      dd.totalPomodoros = (dd.totalPomodoros || 0) + 1;
+      saveDay(S.cd);
+      TIMER.mode = 'work';
+      TIMER.seconds = 25 * 60;
+      TIMER.running = false;
+      clearInterval(TIMER.interval);
+      TIMER.interval = null;
+      tryNotify('✅ Pomodoro tamamlandı! Harika iş.');
+      render();
+      return;
+    }
+  }
+  updateTimerEl();
+}
+
+function timerStart() {
+  if (TIMER.running) return;
+  TIMER.running = true;
+  TIMER.interval = setInterval(timerTick, 1000);
+  updateTimerEl();
+}
+function timerPause() {
+  TIMER.running = false;
+  clearInterval(TIMER.interval);
+  TIMER.interval = null;
+  updateTimerEl();
+}
+function timerReset() {
+  TIMER.running = false;
+  clearInterval(TIMER.interval);
+  TIMER.interval = null;
+  TIMER.mode = 'work';
+  TIMER.seconds = 25 * 60;
+  updateTimerEl();
+}
+function tryNotify(msg) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    new Notification(msg);
+  }
+}
+function requestNotifyPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+function timerLabel() {
+  const m = Math.floor(TIMER.seconds / 60).toString().padStart(2, '0');
+  const s = (TIMER.seconds % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function updateTimerEl() {
+  const el = document.getElementById('pomo-display');
+  if (!el) return;
+  const total = TIMER.mode === 'work' ? dayData(S.cd).totalPomodoros || 0 : (dayData(S.cd).totalPomodoros || 0);
+  el.innerHTML = buildTimerInner(total);
+}
+
+function buildTimerInner(totalPomodoros) {
+  const isWork = TIMER.mode === 'work';
+  const color = isWork ? '#111' : '#16a34a';
+  const modeLabel = isWork ? 'ÇALIŞMA' : 'MOLA';
+  const pomDots = Array.from({length: Math.min(totalPomodoros, 8)}, () =>
+    `<span style="color:#dc2626;font-size:.75rem">🍅</span>`).join('');
+
+  return `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div>
+        <div style="font-size:.5rem;font-weight:700;letter-spacing:2px;color:${color};opacity:.6">${modeLabel}</div>
+        <div style="font-size:2.4rem;font-weight:700;letter-spacing:-2px;color:${color};line-height:1">${timerLabel()}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:.5rem;color:#9ca3af;letter-spacing:1px;margin-bottom:4px">BUGÜN</div>
+        <div style="font-size:1.3rem;font-weight:700;color:#111">${totalPomodoros} <span style="font-size:.7rem;font-weight:400;color:#9ca3af">pomodoro</span></div>
+        <div style="display:flex;gap:2px;justify-content:flex-end;margin-top:4px;flex-wrap:wrap;max-width:80px">${pomDots}</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      ${TIMER.running
+        ? `<button onclick="timerPause()" style="flex:1;padding:9px;background:#111;color:#fff;border:none;border-radius:8px;font-size:.82rem;font-weight:600">⏸ Duraklat</button>`
+        : `<button onclick="timerStart()" style="flex:1;padding:9px;background:${isWork?'#111':'#16a34a'};color:#fff;border:none;border-radius:8px;font-size:.82rem;font-weight:600">${isWork?'▶ Başlat':'▶ Molayı Başlat'}</button>`
+      }
+      <button onclick="timerReset()" style="padding:9px 14px;background:transparent;color:#9ca3af;border:1.5px solid #d9d2c9;border-radius:8px;font-size:.82rem">↺</button>
+    </div>`;
+}
 
 // ── Tarih yardımcıları ────────────────────────────────
 function dk(d) {
@@ -109,31 +212,30 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── State ─────────────────────────────────────────────
+// ── State & Firebase ──────────────────────────────────
 let S = { data: {}, cd: today(), view: "today" };
 let userDocRef = null;
 let unsub = null;
 
 function dayData(cd) {
-  if (!S.data[cd]) S.data[cd] = { habits: {}, fastingHours: null, weight: null, stepCount: null, spending: null, tasks: [] };
+  if (!S.data[cd]) S.data[cd] = { habits: {}, fastingHours: null, weight: null, stepCount: null, spending: null, tasks: [], habitPomodoros: {}, totalPomodoros: 0 };
   if (!S.data[cd].tasks) S.data[cd].tasks = [];
+  if (!S.data[cd].habitPomodoros) S.data[cd].habitPomodoros = {};
+  if (!S.data[cd].totalPomodoros) S.data[cd].totalPomodoros = 0;
   return S.data[cd];
 }
 
-// ── Firebase kayıt ────────────────────────────────────
 async function saveDay(cd) {
   if (!userDocRef) return;
-  const dd = S.data[cd];
   try {
-    await setDoc(userDocRef, { days: { [cd]: dd } }, { merge: true });
+    await setDoc(userDocRef, { days: { [cd]: S.data[cd] } }, { merge: true });
   } catch(e) { console.error('Kayıt hatası:', e); }
 }
 
 // ── Auth ──────────────────────────────────────────────
 async function signIn() {
-  try {
-    await signInWithPopup(auth, provider);
-  } catch(e) {
+  try { await signInWithPopup(auth, provider); }
+  catch(e) {
     document.getElementById('app').innerHTML =
       `<div style="padding:40px;text-align:center;color:#dc2626;font-size:.85rem">Giriş başarısız.<br><br>${e.message}</div>`;
   }
@@ -144,7 +246,6 @@ onAuthStateChanged(auth, (user) => {
     userDocRef = doc(db, 'users', user.uid);
     document.getElementById('app').innerHTML =
       `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#9ca3af;font-size:.85rem">Veriler yükleniyor...</div>`;
-
     if (unsub) unsub();
     unsub = onSnapshot(userDocRef, (snap) => {
       const remote = snap.data();
@@ -186,6 +287,7 @@ function render() {
   const wc  = lw ? (lw - START_WEIGHT).toFixed(1) : null;
   const scoreColor = sc >= 75 ? "#16a34a" : sc >= 50 ? "#d97706" : sc > 0 ? "#dc2626" : "#9ca3af";
 
+  // Header
   let html = `
   <div style="background:#f2ede7;padding:22px 20px 16px;border-bottom:1px solid #d9d2c9">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
@@ -210,6 +312,7 @@ function render() {
     </div>
   </div>`;
 
+  // Tarih nav
   html += `
   <div style="background:#f2ede7;padding:10px 20px;border-bottom:1px solid #d9d2c9;display:flex;align-items:center;justify-content:space-between">
     <button onclick="navDate(-1)" style="background:none;border:none;padding:6px 10px;color:#9ca3af;font-size:1.1rem;border-radius:6px">←</button>
@@ -222,6 +325,7 @@ function render() {
     <button onclick="navDate(1)" style="background:none;border:none;padding:6px 10px;color:${isToday ? '#d9d2c9' : '#9ca3af'};font-size:1.1rem;border-radius:6px">→</button>
   </div>`;
 
+  // Hafta şeridi
   html += `<div style="display:flex;background:#f2ede7;border-bottom:1px solid #d9d2c9;padding:10px 14px;gap:4px">`;
   for (const d of wk) {
     const s = score(data, d.key);
@@ -236,6 +340,7 @@ function render() {
   }
   html += `</div>`;
 
+  // Sekmeler
   html += `<div style="display:flex;background:#f2ede7;border-bottom:1px solid #d9d2c9">`;
   for (const [k, l] of [['today', 'Günlük'], ['week', 'Hafta'], ['data', 'Veri']]) {
     html += `<button onclick="setView('${k}')" style="flex:1;padding:10px;background:none;border:none;border-bottom:2px solid ${view === k ? '#111' : 'transparent'};color:${view === k ? '#111' : '#9ca3af'};font-size:.72rem;font-weight:${view === k ? 600 : 400};letter-spacing:.5px">${l}</button>`;
@@ -246,38 +351,55 @@ function render() {
 
   // ══════════════ GÜNLÜK ══════════════
   if (view === 'today') {
+
+    // Pomodoro timer kartı
+    const totalPomodoros = dd.totalPomodoros || 0;
+    html += `
+    <div style="background:#e8e2da;border:1.5px solid #d9d2c9;border-radius:12px;padding:16px;margin-bottom:22px" id="pomo-display">
+      ${buildTimerInner(totalPomodoros)}
+    </div>`;
+
+    // Alışkanlıklar
     for (const [ck, ci] of Object.entries(CAT)) {
       const ch = HABITS.filter(h => h.category === ck);
       if (!ch.length) continue;
       html += `<div style="margin-bottom:22px">
         <div style="font-size:.55rem;font-weight:700;color:${ci.color};letter-spacing:2px;text-transform:uppercase;margin-bottom:8px">${ci.label}</div>`;
+
       for (const h of ch) {
         const checked = habits[h.id] || false;
+        const pomCount = dd.habitPomodoros?.[h.id] || 0;
+        const pomBadge = `<button onclick="addHabitPomo('${h.id}')" style="display:flex;align-items:center;gap:3px;background:${pomCount>0?'#fee2e2':'transparent'};border:1px solid ${pomCount>0?'#fca5a5':'#d9d2c9'};border-radius:6px;padding:3px 7px;flex-shrink:0">
+          <span style="font-size:.7rem">🍅</span>
+          <span style="font-size:.65rem;font-weight:600;color:${pomCount>0?'#dc2626':'#9ca3af'}">${pomCount}</span>
+        </button>`;
+
         if (h.hasHours) {
           const fh = dd.fastingHours != null ? dd.fastingHours : '';
           html += `
-          <div style="display:flex;align-items:center;padding:13px 14px;margin-bottom:6px;background:${checked ? ci.bg : '#e8e2da'};border:1.5px solid ${checked ? ci.border : '#d9d2c9'};border-radius:10px;gap:10px">
+          <div style="display:flex;align-items:center;padding:11px 12px;margin-bottom:6px;background:${checked ? ci.bg : '#e8e2da'};border:1.5px solid ${checked ? ci.border : '#d9d2c9'};border-radius:10px;gap:8px">
             <button onclick="toggleHabit('${h.id}')" style="width:22px;height:22px;border-radius:50%;border:2px solid ${checked ? ci.color : '#d1d5db'};background:${checked ? ci.color : 'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.6rem">${checked ? '✓' : ''}</button>
             <span style="font-size:.95rem">${h.emoji}</span>
-            <span style="font-size:.8rem;color:${checked ? '#111' : '#6b7280'};flex:1;font-weight:${checked ? 500 : 400}">${h.label}</span>
-            <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
-              <input type="number" min="0" max="24" step="0.5" value="${fh}" onchange="updateFastingHours(this.value)" placeholder="—" style="width:42px;padding:4px 6px;background:#ddd6cd;border:1px solid #c9c2b9;border-radius:6px;font-size:.78rem;text-align:center;font-family:inherit;color:#111">
-              <span style="font-size:.62rem;color:#9ca3af">saat</span>
-            </div>
+            <span style="font-size:.78rem;color:${checked ? '#111' : '#6b7280'};flex:1;font-weight:${checked ? 500 : 400}">${h.label}</span>
+            <input type="number" min="0" max="24" step="0.5" value="${fh}" onchange="updateFastingHours(this.value)" placeholder="—" style="width:38px;padding:3px 5px;background:#ddd6cd;border:1px solid #c9c2b9;border-radius:6px;font-size:.75rem;text-align:center;font-family:inherit;color:#111">
+            <span style="font-size:.6rem;color:#9ca3af">sa</span>
+            ${pomBadge}
           </div>`;
         } else {
           html += `
-          <button onclick="toggleHabit('${h.id}')" style="display:flex;align-items:center;width:100%;padding:13px 14px;margin-bottom:6px;background:${checked ? ci.bg : '#e8e2da'};border:1.5px solid ${checked ? ci.border : '#d9d2c9'};border-radius:10px;gap:10px;text-align:left">
-            <div style="width:22px;height:22px;border-radius:50%;border:2px solid ${checked ? ci.color : '#d1d5db'};background:${checked ? ci.color : 'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.6rem">${checked ? '✓' : ''}</div>
+          <div style="display:flex;align-items:center;padding:11px 12px;margin-bottom:6px;background:${checked ? ci.bg : '#e8e2da'};border:1.5px solid ${checked ? ci.border : '#d9d2c9'};border-radius:10px;gap:8px">
+            <button onclick="toggleHabit('${h.id}')" style="width:22px;height:22px;border-radius:50%;border:2px solid ${checked ? ci.color : '#d1d5db'};background:${checked ? ci.color : 'transparent'};flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.6rem">${checked ? '✓' : ''}</button>
             <span style="font-size:.95rem">${h.emoji}</span>
-            <span style="font-size:.8rem;color:${checked ? '#111' : '#6b7280'};flex:1;font-weight:${checked ? 500 : 400}">${h.label}</span>
-            ${checked ? `<span style="font-size:.6rem;font-weight:600;color:${ci.color}">+${Math.round(100 / HABITS.length)}%</span>` : ''}
-          </button>`;
+            <span style="font-size:.78rem;color:${checked ? '#111' : '#6b7280'};flex:1;font-weight:${checked ? 500 : 400}">${h.label}</span>
+            ${checked ? `<span style="font-size:.6rem;font-weight:600;color:${ci.color}">+${Math.round(100/HABITS.length)}%</span>` : ''}
+            ${pomBadge}
+          </div>`;
         }
       }
       html += `</div>`;
     }
 
+    // Takip
     html += `
     <div style="margin-bottom:24px">
       <div style="font-size:.55rem;font-weight:700;color:#6366f1;letter-spacing:2px;text-transform:uppercase;margin-bottom:10px">Takip</div>
@@ -296,6 +418,7 @@ function render() {
     }
     html += `</div></div>`;
 
+    // Görevler
     const tasks = dd.tasks || [];
     const doneCnt = tasks.filter(t => t.done).length;
     html += `
@@ -308,7 +431,7 @@ function render() {
         <input type="text" id="task-input" placeholder="Yeni görev ekle..." onkeydown="if(event.key==='Enter')addTask()" style="flex:1;padding:10px 12px;background:#e8e2da;border:1.5px solid #d9d2c9;border-radius:8px;font-size:.8rem;color:#111;font-family:inherit">
         <button onclick="addTask()" style="padding:10px 16px;background:#111;color:#fff;border:none;border-radius:8px;font-size:1rem;line-height:1">+</button>
       </div>`;
-    if (tasks.length === 0) {
+    if (!tasks.length) {
       html += `<div style="text-align:center;padding:20px;color:#d1d5db;font-size:.78rem">Henüz görev yok</div>`;
     } else {
       for (const t of tasks) {
@@ -339,30 +462,40 @@ function render() {
       </div>`;
     }
     html += `</div>`;
+
     const scored = wk.filter(d => !d.isFuture && score(data, d.key) > 0);
     const avg = scored.length ? Math.round(scored.reduce((s, d) => s + score(data, d.key), 0) / scored.length) : 0;
-    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+    const weekPomos = wk.filter(d => !d.isFuture).reduce((s, d) => s + (data[d.key]?.totalPomodoros || 0), 0);
+
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px">
       <div style="background:#e8e2da;border-radius:10px;padding:14px">
         <div style="font-size:.5rem;color:#9ca3af;letter-spacing:1px;margin-bottom:6px">HAFTALIK ORT.</div>
-        <div style="font-size:1.6rem;font-weight:700;color:${avg >= 50 ? '#16a34a' : '#dc2626'}">${avg}%</div>
+        <div style="font-size:1.4rem;font-weight:700;color:${avg >= 50 ? '#16a34a' : '#dc2626'}">${avg}%</div>
       </div>
       <div style="background:#e8e2da;border-radius:10px;padding:14px">
         <div style="font-size:.5rem;color:#9ca3af;letter-spacing:1px;margin-bottom:6px">AKTİF SERİ</div>
-        <div style="font-size:1.6rem;font-weight:700;color:${sr >= 3 ? '#d97706' : '#9ca3af'}">${sr} <span style="font-size:.7rem;font-weight:400;color:#9ca3af">gün</span></div>
+        <div style="font-size:1.4rem;font-weight:700;color:${sr >= 3 ? '#d97706' : '#9ca3af'}">${sr} <span style="font-size:.65rem;font-weight:400;color:#9ca3af">gün</span></div>
+      </div>
+      <div style="background:#e8e2da;border-radius:10px;padding:14px">
+        <div style="font-size:.5rem;color:#9ca3af;letter-spacing:1px;margin-bottom:6px">POMODORO</div>
+        <div style="font-size:1.4rem;font-weight:700;color:#dc2626">🍅 ${weekPomos}</div>
       </div>
     </div>`;
+
     html += `<div style="font-size:.5rem;color:#9ca3af;letter-spacing:1.5px;margin-bottom:12px">ALIŞKANLIK BAZINDA</div>`;
     for (const h of HABITS) {
       const hits = wk.filter(d => !d.isFuture && data[d.key]?.habits?.[h.id]).length;
       const total = wk.filter(d => !d.isFuture).length || 1;
       const pct = Math.round(hits / total * 100);
+      const weekHabitPomos = wk.filter(d => !d.isFuture).reduce((s, d) => s + (data[d.key]?.habitPomodoros?.[h.id] || 0), 0);
       html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <span style="font-size:.85rem;width:22px">${h.emoji}</span>
         <span style="font-size:.72rem;color:#6b7280;flex:1">${h.label}</span>
-        <div style="width:70px;height:5px;background:#d9d2c9;border-radius:3px;overflow:hidden">
+        <div style="width:60px;height:5px;background:#d9d2c9;border-radius:3px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:${CAT[h.category].color};border-radius:3px"></div>
         </div>
-        <span style="font-size:.62rem;color:#9ca3af;width:28px;text-align:right">${pct}%</span>
+        <span style="font-size:.62rem;color:#9ca3af;width:24px;text-align:right">${pct}%</span>
+        ${weekHabitPomos > 0 ? `<span style="font-size:.65rem;color:#dc2626">🍅${weekHabitPomos}</span>` : '<span style="width:28px"></span>'}
       </div>`;
     }
   }
@@ -433,14 +566,21 @@ function render() {
 
   html += `</div>`;
   document.getElementById('app').innerHTML = html;
+
+  // Timer çalışıyorsa interval devam etsin
+  if (TIMER.running) updateTimerEl();
 }
 
 // ── Eylemler ──────────────────────────────────────────
 function toggleHabit(id) {
   const dd = dayData(S.cd);
   dd.habits[id] = !dd.habits[id];
-  render();
-  saveDay(S.cd);
+  render(); saveDay(S.cd);
+}
+function addHabitPomo(id) {
+  const dd = dayData(S.cd);
+  dd.habitPomodoros[id] = (dd.habitPomodoros[id] || 0) + 1;
+  render(); saveDay(S.cd);
 }
 function updateField(key, val, isFloat) {
   const dd = dayData(S.cd);
@@ -458,8 +598,7 @@ function addTask() {
   if (!text) return;
   const dd = dayData(S.cd);
   dd.tasks.push({ id: Date.now().toString(), text, done: false });
-  render();
-  saveDay(S.cd);
+  render(); saveDay(S.cd);
 }
 function toggleTask(id) {
   const t = dayData(S.cd).tasks?.find(t => t.id === id);
@@ -468,8 +607,7 @@ function toggleTask(id) {
 function deleteTask(id) {
   const dd = dayData(S.cd);
   dd.tasks = dd.tasks.filter(t => t.id !== id);
-  render();
-  saveDay(S.cd);
+  render(); saveDay(S.cd);
 }
 function navDate(dir) {
   const d = new Date(S.cd + "T00:00:00");
@@ -487,8 +625,9 @@ function resetAll() {
   }
 }
 
-// onclick handler'ları global yap
+// Global'e aç
 window.toggleHabit = toggleHabit;
+window.addHabitPomo = addHabitPomo;
 window.updateField = updateField;
 window.updateFastingHours = updateFastingHours;
 window.addTask = addTask;
@@ -499,7 +638,11 @@ window.navToday = navToday;
 window.setDate = setDate;
 window.setView = setView;
 window.resetAll = resetAll;
+window.timerStart = timerStart;
+window.timerPause = timerPause;
+window.timerReset = timerReset;
 
+requestNotifyPermission();
 </script>
 </body>
 </html>
