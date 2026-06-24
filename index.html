@@ -251,6 +251,14 @@ onAuthStateChanged(auth, (user) => {
       const remote = snap.data();
       S.data = remote?.days || {};
       render();
+    }, (err) => {
+      console.error('Firestore hatası:', err);
+      document.getElementById('app').innerHTML =
+        `<div style="padding:40px;text-align:center;font-family:Inter,sans-serif">
+          <div style="font-size:1rem;font-weight:600;color:#111;margin-bottom:8px">Bağlantı hatası</div>
+          <div style="font-size:.8rem;color:#9ca3af;margin-bottom:24px">${err.message}</div>
+          <button onclick="location.reload()" style="padding:10px 20px;background:#111;color:#fff;border:none;border-radius:8px;font-size:.82rem;font-family:inherit">Tekrar Dene</button>
+        </div>`;
     });
   } else {
     if (unsub) { unsub(); unsub = null; }
